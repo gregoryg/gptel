@@ -50,14 +50,14 @@ Or is it the other way around?"
 
 (defvar gptel--crowdsourced-prompts-url
   "https://github.com/f/awesome-chatgpt-prompts/raw/main/prompts.csv"
-  "URL for crowdsourced ChatGPT system prompts.")
+  "URL for crowdsourced LLM system prompts.")
 
 (defvar gptel--crowdsourced-prompts
   (make-hash-table :test #'equal)
-  "Crowdsourced system prompts for ChatGPT.")
+  "Crowdsourced LLM system prompts.")
 
 (defun gptel--crowdsourced-prompts ()
-  "Acquire and read crowdsourced system prompts for ChatGPT.
+  "Acquire and read crowdsourced LLM system prompts.
 
 These are stored in the variable `gptel--crowdsourced-prompts',
 which see."
@@ -78,11 +78,13 @@ which see."
                 "?"))
           ;; Fetch file
           (message "Fetching prompts...")
-          (if (url-copy-file gptel--crowdsourced-prompts-url
-                             gptel-crowdsourced-prompts-file
-                             'ok-if-already-exists)
-              (message "Fetching prompts... done.")
-            (message "Could not retrieve new prompts."))))
+          (let ((dir (file-name-directory gptel-crowdsourced-prompts-file)))
+            (unless (file-exists-p dir) (mkdir dir 'create-parents))
+            (if (url-copy-file gptel--crowdsourced-prompts-url
+                               gptel-crowdsourced-prompts-file
+                               'ok-if-already-exists)
+		(message "Fetching prompts... done.")
+              (message "Could not retrieve new prompts.")))))
       (if (not (file-readable-p gptel-crowdsourced-prompts-file))
           (progn (message "No crowdsourced prompts available")
                  (call-interactively #'gptel-system-prompt))
@@ -108,7 +110,7 @@ which see."
 ;; BUG: The `:incompatible' spec doesn't work if there's a `:description' below it.
 ;;;###autoload (autoload 'gptel-menu "gptel-transient" nil t)
 (transient-define-prefix gptel-menu ()
-  "Change parameters of prompt to send ChatGPT."
+  "Change parameters of prompt to send to the LLM."
   ;; :incompatible '(("-m" "-n" "-k" "-e"))
   [:description
    (lambda () (format "Directive:  %s"
@@ -210,7 +212,7 @@ which see."
                     :transient 'transient--do-exit))))))
 
 (transient-define-prefix gptel-system-prompt ()
-  "Change the system prompt to send ChatGPT.
+  "Change the LLM system prompt.
 
 The \"system\" prompt establishes directives for the chat
 session. Some examples of system prompts are:
@@ -231,7 +233,7 @@ Customize `gptel-directives' for task-specific prompts."
 ;; ** Prefix for rewriting/refactoring
 
 (transient-define-prefix gptel-rewrite-menu ()
-  "Rewrite or refactor text region using ChatGPT."
+  "Rewrite or refactor text region using an LLM."
   [:description
    (lambda ()
      (format "Directive:  %s"
@@ -283,11 +285,7 @@ include."
 
 This is roughly the number of words in the response. 100-300 is a
 reasonable range for short answers, 400 or more for longer
-responses.
-
-If left unset, ChatGPT will target about 40% of the total token
-count of the conversation so far in each message, so messages
-will get progressively longer!"
+responses."
   :description "Response length (tokens)"
   :class 'transient-lisp-variable
   :variable 'gptel-max-tokens
@@ -555,7 +553,7 @@ This uses the prompts in the variable
     (message "No prompts available.")))
 
 (transient-define-suffix gptel--suffix-system-message ()
-  "Set directives sent to ChatGPT."
+  "Edit LLM directives."
   :transient 'transient--do-exit
   :description "Set custom directives"
   :key "h"
@@ -583,9 +581,9 @@ This uses the prompts in the variable
         ;; TODO: make-separator-line requires Emacs 28.1+.
         ;; (insert (propertize (make-separator-line) 'rear-nonsticky t))
         (set-marker msg-start (point))
-        (insert (buffer-local-value 'gptel--system-message orig-buf))
-        (push-mark)
-        (beginning-of-line)
+        (save-excursion
+          (insert (buffer-local-value 'gptel--system-message orig-buf))
+          (push-mark nil 'nomsg))
         (activate-mark))
       (display-buffer (current-buffer)
                       `((display-buffer-below-selected)
