@@ -17,6 +17,7 @@ GPTel is a simple Large Language Model chat client for Emacs, with support for m
 | Kagi Summarizer | ✓      | [[https://kagi.com/settings?p=api][API key]]                   |
 | together.ai     | ✓      | [[https://api.together.xyz/settings/api-keys][API key]]                   |
 | Anyscale        | ✓      | [[https://docs.endpoints.anyscale.com/][API key]]                   |
+| Perplexity      | ✓      | [[https://docs.perplexity.ai/docs/getting-started][API key]]                   |
 
 *General usage*: ([[https://www.youtube.com/watch?v=bsRnh_brggM][YouTube Demo]])
 
@@ -55,6 +56,7 @@ GPTel uses Curl if available, but falls back to url-retrieve to work without ext
       - [[#kagi-fastgpt--summarizer][Kagi (FastGPT & Summarizer)]]
       - [[#togetherai][together.ai]]
       - [[#anyscale][Anyscale]]
+      - [[#perplexity][Perplexity]]
   - [[#usage][Usage]]
     - [[#in-any-buffer][In any buffer:]]
     - [[#in-a-dedicated-chat-buffer][In a dedicated chat buffer:]]
@@ -66,6 +68,7 @@ GPTel uses Curl if available, but falls back to url-retrieve to work without ext
       - [[#i-want-the-transient-menu-options-to-be-saved-so-i-only-need-to-set-them-once][I want the transient menu options to be saved so I only need to set them once]]
       - [[#i-want-to-use-gptel-in-a-way-thats-not-supported-by-gptel-send-or-the-options-menu][I want to use gptel in a way that's not supported by =gptel-send= or the options menu]]
       - [[#doom-emacs-sending-a-query-from-the-gptel-menu-fails-because-of-a-key-conflict-with-org-mode][(Doom Emacs) Sending a query from the gptel menu fails because of a key conflict with Org mode]]
+      - [[#chatgpt-i-get-the-error-http2-429-you-exceeded-your-current-quota][(ChatGPT) I get the error "(HTTP/2 429) You exceeded your current quota"]]
       - [[#why-another-llm-client][Why another LLM client?]]
   - [[#additional-configuration][Additional Configuration]]
   - [[#alternatives][Alternatives]]
@@ -329,6 +332,33 @@ You can pick this backend from the menu when using gptel (see [[#usage][Usage]])
 #+end_src
 
 #+html: </details>
+#+html: <details><summary>
+**** Perplexity
+#+html: </summary>
+
+Register a backend with
+#+begin_src emacs-lisp
+;; Perplexity offers an OpenAI compatible API
+(gptel-make-openai "Perplexity"         ;Any name you want
+  :host "api.perplexity.ai"
+  :key "your-api-key"                   ;can be a function that returns the key
+  :endpoint "/chat/completions"
+  :stream t
+  :models '(;; has many more, check perplexity.ai
+            "pplx-7b-chat"
+            "pplx-70b-chat"
+            "pplx-7b-online"
+            "pplx-70b-online"))
+#+end_src
+
+You can pick this backend from the menu when using gptel (see [[#usage][Usage]]), or set this as the default value of =gptel-backend=:
+#+begin_src emacs-lisp
+;; OPTIONAL configuration
+(setq-default gptel-backend (gptel-make-openai "Perplexity" ...)
+              gptel-model   "pplx-7b-chat")
+#+end_src
+
+#+html: </details>
 
 ** Usage
 
@@ -466,6 +496,17 @@ Two solutions:
   #+begin_src emacs-lisp
   (transient-suffix-put 'gptel-menu (kbd "RET") :key "<f8>")
   #+end_src
+
+#+html: </details>
+#+html: <details><summary>
+**** (ChatGPT) I get the error "(HTTP/2 429) You exceeded your current quota"
+#+html:</summary>
+
+#+begin_quote
+(HTTP/2 429) You exceeded your current quota, please check your plan and billing details.
+#+end_quote
+
+Using the ChatGPT (or any OpenAI) API requires [[https://platform.openai.com/account/billing/overview][adding credit to your account]].
 
 #+html: </details>
 #+html: <details><summary>
