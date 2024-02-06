@@ -128,6 +128,9 @@
 (require 'cl-generic)
 (require 'gptel-openai)
 
+
+;; User options
+
 (defgroup gptel nil
   "Interact with LLMs from anywhere in Emacs."
   :group 'hypermedia)
@@ -464,6 +467,11 @@ which see."
 (make-obsolete-variable
  'gptel--debug 'gptel-log-level "0.6.5")
 
+(defvar-local gptel--old-header-line nil)
+
+
+;; Utility functions
+
 (defun gptel-api-key-from-auth-source (&optional host user)
   "Lookup api key in the auth source.
 By default, the LLM host for the active backend is used as HOST,
@@ -539,6 +547,61 @@ Note: Changing this variable does not affect gptel\\='s behavior
 in any way.")
 (put 'gptel--backend-name 'safe-local-variable #'always)
 
+(defun gptel--get-buffer-bounds ()
+  "Return the gptel response boundaries in the buffer as an alist."
+  (save-excursion
+    (save-restriction
+      (widen)
+      (goto-char (point-max))
+      (let ((prop) (bounds))
+        (while (setq prop (text-property-search-backward
+                           'gptel 'response t))
+          (push (cons (prop-match-beginning prop)
+                      (prop-match-end prop))
+                bounds))
+        bounds))))
+
+(defun gptel--get-bounds ()
+  "Return the gptel response boundaries around point."
+  (let (prop)
+    (save-excursion
+      (when (text-property-search-backward
+             'gptel 'response t)
+        (when (setq prop (text-property-search-forward
+                          'gptel 'response t))
+          (cons (prop-match-beginning prop)
+                      (prop-match-end prop)))))))
+
+(defun gptel--in-response-p (&optional pt)
+  "Check if position PT is inside a gptel response."
+  (get-char-property (or pt (point)) 'gptel))
+
+(defun gptel--at-response-history-p (&optional pt)
+  "Check if gptel response at position PT has variants."
+  (get-char-property (or pt (point)) 'gptel-history))
+
+
+;; Logging
+
+(defconst gptel--log-buffer-name "*gptel-log*"
+  "Log buffer for gptel.")
+
+(defun gptel--log (data &optional type no-json)
+  "Log DATA to `gptel--log-buffer-name'.
+
+TYPE is a label for data being logged.  DATA is assumed to be
+Valid JSON unless NO-JSON is t."
+  (with-current-buffer (get-buffer-create gptel--log-buffer-name)
+    (let ((p (goto-char (point-max))))
+      (unless (bobp) (insert "\n"))
+      (insert (format "{\"gptel\": \"%s\", " (or type "none"))
+              (format-time-string "\"timestamp\": \"%Y-%m-%d %H:%M:%S\"}\n")
+              data)
+      (unless no-json (ignore-errors (json-pretty-print p (point)))))))
+
+
+;; Saving and restoring state
+
 (defun gptel--restore-backend (name)
   "Activate gptel backend with NAME in current buffer.
 
@@ -610,11 +673,11 @@ file."
       ;; Save response boundaries
       (letrec ((write-bounds
                 (lambda (attempts)
-                  (let* ((bounds (gptel--get-bounds))
+                  (let* ((bounds (gptel--get-buffer-bounds))
                          (offset (caar bounds))
                          (offset-marker (set-marker (make-marker) offset)))
                     (org-entry-put (point-min) "GPTEL_BOUNDS"
-                                   (prin1-to-string (gptel--get-bounds)))
+                                   (prin1-to-string (gptel--get-buffer-bounds)))
                     (when (and (not (= (marker-position offset-marker) offset))
                                (> attempts 0))
                       (funcall write-bounds (1- attempts)))))))
@@ -632,23 +695,11 @@ file."
                (add-file-local-variable 'gptel--system-message gptel--system-message))
              (when gptel-max-tokens
                (add-file-local-variable 'gptel-max-tokens gptel-max-tokens))
-             (add-file-local-variable 'gptel--bounds (gptel--get-bounds))))))))
+             (add-file-local-variable 'gptel--bounds (gptel--get-buffer-bounds))))))))
 
-(defun gptel--get-bounds ()
-  "Return the gptel response boundaries as an alist."
-  (save-excursion
-    (save-restriction
-      (widen)
-      (goto-char (point-max))
-      (let ((prop) (bounds))
-        (while (setq prop (text-property-search-backward
-                           'gptel 'response t))
-          (push (cons (prop-match-beginning prop)
-                      (prop-match-end prop))
-                bounds))
-        bounds))))
+
+;; Minor mode and UI
 
-(defvar-local gptel--old-header-line nil)
 ;;;###autoload
 (define-minor-mode gptel-mode
   "Minor mode for interacting with LLMs."
@@ -717,6 +768,8 @@ file."
         (message (propertize msg 'face face))))
     (force-mode-line-update)))
 
+
+;; Send queries, handle responses
 (cl-defun gptel-request
     (&optional prompt &key callback
                (buffer (current-buffer))
@@ -997,22 +1050,6 @@ BACKEND is the LLM backend in use.
 
 PROMPTS is the plist of previous user queries and LLM responses.")
 
-(defconst gptel--log-buffer-name "*gptel-log*"
-  "Log buffer for gptel.")
-
-(defun gptel--log (data &optional type no-json)
-  "Log DATA to `gptel--log-buffer-name'.
-
-TYPE is a label for data being logged.  DATA is assumed to be
-Valid JSON unless NO-JSON is t."
-  (with-current-buffer (get-buffer-create gptel--log-buffer-name)
-    (let ((p (goto-char (point-max))))
-      (unless (bobp) (insert "\n"))
-      (insert (format "{\"gptel\": \"%s\", " (or type "none"))
-              (format-time-string "\"timestamp\": \"%Y-%m-%d %H:%M:%S\"}\n")
-              data)
-      (unless no-json (ignore-errors (json-pretty-print p (point)))))))
-
 ;; TODO: Use `run-hook-wrapped' with an accumulator instead to handle
 ;; buffer-local hooks, etc.
 (defun gptel--transform-response (content-str buffer)
@@ -1097,9 +1134,6 @@ See `gptel-curl--get-response' for its contents.")
 (defun gptel--url-parse-response (backend response-buffer)
   "Parse response from BACKEND in RESPONSE-BUFFER."
   (when (buffer-live-p response-buffer)
-    (when gptel--debug
-      (with-current-buffer response-buffer
-        (clone-buffer "*gptel-error*" 'show)))
     (with-current-buffer response-buffer
       (when gptel-log-level             ;logging
         (save-excursion
@@ -1314,6 +1348,117 @@ text stream."
               (buffer-substring (point) start-pt)
             (prog1 (buffer-substring (point) (point-max))
                    (set-marker start-pt (point-max)))))))))
+
+
+;; Response tweaking commands
+
+(defun gptel--attach-response-history (history &optional buf)
+  "Attach HISTORY to the next gptel response in buffer BUF.
+
+HISTORY is a list of strings typically containing text replaced
+by gptel.  BUF is the current buffer if not specified.
+
+This is used to maintain variants of prompts or responses to diff
+against if required."
+  (with-current-buffer (or buf (current-buffer))
+    (letrec ((gptel--attach-after
+              (lambda (b e)
+                (put-text-property b e 'gptel-history
+                                   (append (ensure-list history)
+                                           (get-char-property (1- e) 'gptel-history)))
+                (remove-hook 'gptel-post-response-functions
+                             gptel--attach-after 'local))))
+      (add-hook 'gptel-post-response-functions gptel--attach-after
+                nil 'local))))
+
+(defun gptel--ediff (&optional arg bounds-func)
+  "Ediff response at point against previous gptel responses.
+
+If prefix ARG is non-nil, select the previous response to ediff
+against interactively.
+
+If specified, use BOUNDS-FUNC to compute the bounds of the
+response at point.  This can be used to include additional
+context for the ediff session."
+  (interactive "P")
+  (when (gptel--at-response-history-p)
+    (pcase-let* ((`(,beg . ,end) (funcall (or bounds-func #'gptel--get-bounds)))
+                 (prev-response
+                  (if arg
+                      (completing-read "Choose response variant to diff against: "
+                                       (get-char-property (point) 'gptel-history)
+                                       nil t)
+                    (car-safe (get-char-property (point) 'gptel-history))))
+                 (buffer-mode major-mode)
+                 (bufname (buffer-name))
+                 (`(,new-buf ,new-beg ,new-end)
+                  (with-current-buffer
+                      (get-buffer-create (concat bufname "-PREVIOUS-*"))
+                    (let ((inhibit-read-only t))
+                      (erase-buffer)
+                      (delay-mode-hooks (funcall buffer-mode))
+                      (insert prev-response)
+                      (goto-char (point-min))
+                      (list (current-buffer) (point-min) (point-max))))))
+      (unless prev-response (user-error "gptel response is additive: no changes to ediff"))
+      (require 'ediff)
+      (letrec ((cwc (current-window-configuration))
+               (gptel--ediff-restore
+                (lambda ()
+                  (when (window-configuration-p cwc)
+                    (set-window-configuration cwc))
+                  (kill-buffer (get-buffer (concat bufname "-PREVIOUS-*")))
+                  (kill-buffer (get-buffer (concat bufname "-CURRENT-*")))
+                  (remove-hook 'ediff-quit-hook gptel--ediff-restore))))
+        (add-hook 'ediff-quit-hook gptel--ediff-restore)
+        (apply
+         #'ediff-regions-internal
+         (get-buffer (ediff-make-cloned-buffer (current-buffer) "-CURRENT-*"))
+         beg end new-buf new-beg new-end
+         nil
+         (list 'ediff-regions-wordwise 'word-wise nil)
+         ;; (if (transient-arg-value "-w" args)
+         ;;     (list 'ediff-regions-wordwise 'word-wise nil)
+         ;;   (list 'ediff-regions-linewise nil nil))
+         )))))
+
+(defun gptel--mark-response ()
+  "Mark gptel response at point, if any."
+  (interactive)
+  (unless (gptel--in-response-p) (user-error "No gptel response at point"))
+  (pcase-let* ((`(,beg . ,end) (gptel--get-bounds)))
+    (goto-char beg) (push-mark) (goto-char end) (activate-mark)))
+
+(defun gptel--previous-variant (&optional arg)
+  "Switch to previous gptel-response at this point, if it exists."
+  (interactive "p")
+  (pcase-let* ((`(,beg . ,end) (gptel--get-bounds))
+               (history (get-char-property (point) 'gptel-history))
+               (alt-response (car-safe history))
+               (offset))
+    (unless (and history alt-response)
+      (user-error "No variant responses available"))
+    (if (> arg 0)
+        (setq history (append (cdr history)
+                              (list (buffer-substring-no-properties beg end))))
+      (setq
+       alt-response (car (last history))
+       history (cons (buffer-substring-no-properties beg end)
+                     (nbutlast history))))
+    (add-text-properties
+             0 (length alt-response)
+             `(gptel response rear-nonsticky t gptel-history ,history)
+             alt-response)
+    (setq offset (min (- (point) beg) (1- (length alt-response))))
+    (delete-region beg end)
+    (insert alt-response)
+    (goto-char (+ beg offset))
+    (pulse-momentary-highlight-region beg (+ beg (length alt-response)))))
+
+(defun gptel--next-variant (&optional arg)
+  "Switch to next gptel-response at this point, if it exists."
+  (interactive "p")
+  (gptel--previous-variant (- arg)))
 
 (provide 'gptel)
 ;;; gptel.el ends here
