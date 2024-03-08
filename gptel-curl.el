@@ -199,20 +199,17 @@ PROCESS and _STATUS are process parameters."
            (tracking-marker (plist-get info :tracking-marker))
            (start-marker (plist-get info :position))
            (http-status (plist-get info :http-status))
-           (http-msg (plist-get info :status))
-           response-beg response-end)
+           (http-msg (plist-get info :status)))
       (when gptel-log-level (gptel-curl--log-response proc-buf info)) ;logging
-      (if (equal http-status "200")
-          (progn
-            ;; Finish handling response
-            (with-current-buffer (marker-buffer start-marker)
-              (setq response-beg (+ start-marker 2)
-                    response-end (marker-position tracking-marker))
-              (pulse-momentary-highlight-region response-beg tracking-marker)
-              (when gptel-mode (save-excursion (goto-char tracking-marker)
-                                               (insert "\n\n" (gptel-prompt-prefix-string)))))
-            (with-current-buffer gptel-buffer
-              (when gptel-mode (gptel--update-status  " Ready" 'success))))
+      (if (member http-status '("200" "100")) ;Finish handling response
+          (with-current-buffer gptel-buffer
+            (if (not tracking-marker)   ;Empty response
+                (when gptel-mode (gptel--update-status " Empty response" 'success))
+              (pulse-momentary-highlight-region start-marker tracking-marker)
+              (when gptel-mode
+                (save-excursion (goto-char tracking-marker)
+                                (insert "\n\n" (gptel-prompt-prefix-string)))
+                (gptel--update-status  " Ready" 'success))))
         ;; Or Capture error message
         (with-current-buffer proc-buf
           (goto-char (point-max))
@@ -240,7 +237,9 @@ PROCESS and _STATUS are process parameters."
             (gptel--update-status
              (format " Response Error: %s" http-msg) 'error))))
       (with-current-buffer gptel-buffer
-        (run-hook-with-args 'gptel-post-response-functions response-beg response-end)))
+        (run-hook-with-args 'gptel-post-response-functions
+                            (marker-position start-marker)
+                            (marker-position (or tracking-marker start-marker)))))
     (setf (alist-get process gptel-curl--process-alist nil 'remove) nil)
     (kill-buffer proc-buf)))
 
@@ -262,7 +261,8 @@ See `gptel--url-get-response' for details."
                 (insert "\n\n")
                 (when gptel-mode
                   ;; Put prefix before AI response.
-                  (insert (gptel-response-prefix-string))))
+                  (insert (gptel-response-prefix-string)))
+                (move-marker start-marker (point)))
               (setq tracking-marker (set-marker (make-marker) (point)))
               (set-marker-insertion-type tracking-marker t)
               (plist-put info :tracking-marker tracking-marker))
@@ -315,7 +315,7 @@ See `gptel--url-get-response' for details."
               display-buffer-pop-up-window)
              (reusable-frames . visible))))
         ;; Run pre-response hook
-        (when (and (equal (plist-get proc-info :http-status) "200")
+        (when (and (member (plist-get proc-info :http-status) '("200" "100"))
                    gptel-pre-response-hook)
           (with-current-buffer (marker-buffer (plist-get proc-info :position))
             (run-hooks 'gptel-pre-response-hook))))
@@ -323,7 +323,8 @@ See `gptel--url-get-response' for details."
       (when-let ((http-msg (plist-get proc-info :status))
                  (http-status (plist-get proc-info :http-status)))
         ;; Find data chunk(s) and run callback
-        (when-let (((equal http-status "200"))
+        ;; FIXME Handle the case where HTTP 100 is followed by HTTP (not 200) BUG #194
+        (when-let (((member http-status '("200" "100")))
                    (response (funcall (plist-get proc-info :parser) nil proc-info))
                    ((not (equal response ""))))
           (funcall (or (plist-get proc-info :callback)
@@ -385,7 +386,8 @@ PROC-INFO is a plist with contextual information."
                                      (json-read)
                                    (json-readtable-error 'json-read-error)))))
           (cond
-           ((equal http-status "200")
+           ;; FIXME Handle the case where HTTP 100 is followed by HTTP (not 200) BUG #194
+           ((member http-status '("200" "100"))
             (list (string-trim
                    (funcall parser nil response proc-info))
                   http-msg))
