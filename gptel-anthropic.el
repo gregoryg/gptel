@@ -32,7 +32,7 @@
 
 (declare-function prop-match-value "text-property-search")
 (declare-function text-property-search-backward "text-property-search")
-(declare-function json-read "json")
+(declare-function json-read "json" ())
 
 ;;; Anthropic (Messages API)
 (cl-defstruct (gptel-anthropic (:constructor gptel--make-anthropic)
@@ -40,8 +40,7 @@
                                (:include gptel-backend)))
 
 (cl-defmethod gptel-curl--parse-stream ((_backend gptel-anthropic) _info)
-  (let* ((json-object-type 'plist)
-         (content-strs)
+  (let* ((content-strs)
          (pt (point)))
     (condition-case nil
         (while (re-search-forward "^event: " nil t)
@@ -50,7 +49,7 @@
            ((looking-at "content_block_\\(?:start\\|delta\\|stop\\)")
             (save-match-data
               (forward-line 1) (forward-char 5)
-              (when-let* ((response (json-read))
+              (when-let* ((response (gptel--json-read))
                           (content (map-nested-elt
                                     response '(:delta :text))))
                 (push content content-strs))))))
@@ -66,12 +65,12 @@
   "JSON encode PROMPTS for sending to ChatGPT."
   (let ((prompts-plist
          `(:model ,gptel-model
-           :messages [,@prompts]
            :system ,gptel--system-message
            :stream ,(or (and gptel-stream gptel-use-curl
                          (gptel-backend-stream gptel-backend))
                      :json-false)
-           :max_tokens ,(or gptel-max-tokens 1024))))
+           :max_tokens ,(or gptel-max-tokens 1024)
+           :messages [,@prompts])))
     (when gptel-temperature
       (plist-put prompts-plist :temperature gptel-temperature))
     prompts-plist))
@@ -105,7 +104,9 @@
            (lambda () (when-let (key (gptel--get-api-key))
                         `(("x-api-key" . ,key)
                           ("anthropic-version" . "2023-06-01")))))
-          (models '("claude-3-sonnet-20240229" "claude-3-opus-20240229"))
+          (models '("claude-3-sonnet-20240229"
+                    "claude-3-haiku-20240307"
+                    "claude-3-opus-20240229"))
           (host "api.anthropic.com")
           (protocol "https")
           (endpoint "/v1/messages"))
