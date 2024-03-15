@@ -30,6 +30,7 @@
 (declare-function prop-match-value "text-property-search")
 (declare-function text-property-search-backward "text-property-search")
 (declare-function json-read "json")
+(defvar json-object-type)
 
 ;;; Gemini
 (cl-defstruct
@@ -38,15 +39,14 @@
                   (:include gptel-backend)))
 
 (cl-defmethod gptel-curl--parse-stream ((_backend gptel-gemini) _info)
-  (let* ((json-object-type 'plist)
-         (content-strs))
+  (let* ((content-strs))
     (condition-case nil
         ;; while-let is Emacs 29.1+ only
         (while (prog1 (search-forward "{" nil t)
                  (backward-char 1))
           (save-match-data
             (when-let*
-                ((response (json-read))
+                ((response (gptel--json-read))
                  (text (map-nested-elt
                         response '(:candidates 0 :content :parts 0 :text))))
               (push text content-strs))))
@@ -115,7 +115,7 @@
           (host "generativelanguage.googleapis.com")
           (protocol "https")
           (models '("gemini-pro"))
-          (endpoint "/v1beta/models/gemini-pro:"))
+          (endpoint "/v1beta/models"))
 
   "Register a Gemini backend for gptel with NAME.
 
@@ -126,8 +126,7 @@ CURL-ARGS (optional) is a list of additional Curl arguments.
 HOST (optional) is the API host, defaults to
 \"generativelanguage.googleapis.com\".
 
-MODELS is a list of available model names.  Currently only
-\"gemini-pro\" is available.
+MODELS is a list of available model names.
 
 STREAM is a boolean to enable streaming responses, defaults to
 false.
@@ -135,8 +134,7 @@ false.
 PROTOCOL (optional) specifies the protocol, \"https\" by default.
 
 ENDPOINT (optional) is the API endpoint for completions, defaults to
-\"/v1beta/models/gemini-pro:streamGenerateContent\" if STREAM is true and
-\"/v1beta/models/gemini-pro:generateContent\" otherwise.
+\"/v1beta/models\".
 
 HEADER (optional) is for additional headers to send with each
 request. It should be an alist or a function that retuns an
@@ -156,18 +154,18 @@ function that returns the key."
                   :endpoint endpoint
                   :stream stream
                   :key key
-                  :url
-                  (if stream
-                      (lambda ()
-                        (concat protocol "://" host endpoint
-                                (if gptel-stream
-                                    "streamGenerateContent"
-                                  "generateContent")
-                                "?key=" (gptel--get-api-key)))
-                    (lambda ()
-                      (concat protocol "://" host endpoint
-                              "generateContent" "?key="
-                              (gptel--get-api-key)))))))
+                  :url (lambda ()
+                         (let ((method (if (and stream
+                                                gptel-stream)
+                                           "streamGenerateContent"
+                                         "generateContent")))
+                           (format "%s://%s%s/%s:%s?key=%s"
+                                   protocol
+                                   host
+                                   endpoint
+                                   gptel-model
+                                   method
+                                   (gptel--get-api-key)))))))
     (prog1 backend
       (setf (alist-get name gptel--known-backends
                        nil nil #'equal)
