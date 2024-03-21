@@ -371,7 +371,8 @@ interactively call `gptel-send' with a prefix argument."
                 :value-type (list (string :tag "Description")
                                   (string :tag "Directive/System prompt"))))
 
-(defvar gptel--system-message (alist-get 'default gptel-directives)
+;; GJG NOTE: the "description" field may now be obsolete
+(defvar gptel--system-message (cadr (alist-get 'default gptel-directives))
   "The system message used by gptel.")
 (put 'gptel--system-message 'safe-local-variable #'always)
 
