@@ -270,7 +270,7 @@ Also format its value in the Transient menu."
      (string-replace
       "\n" "⮐ "
       (truncate-string-to-width
-       gptel--system-message (max (- (window-width) 6) 14) nil nil t)))
+       gptel--system-message (max (- (window-width) 12) 14) nil nil t)))
    [""
     "Instructions"
     ("s" "Set system message" gptel-system-prompt :transient t)
@@ -363,7 +363,7 @@ Also format its value in the Transient menu."
   "Set up suffixes for system prompt."
   (transient-parse-suffixes
    'gptel-system-prompt
-   (cl-loop for (type desc prompt) in gptel-directives
+   (cl-loop for (type . prompt) in gptel-directives
        ;; Avoid clashes with the custom directive key
        with unused-keys = (delete ?s (number-sequence ?a ?z))
        with width = (window-width)
@@ -649,7 +649,7 @@ Or in an extended conversation:
                                                 'gptel)
                          t))
                       (point))
-        (system-extra (gptel--get-directive args))
+                    (gptel--at-word-end (point)))))))
         (cond
          ((buffer-live-p (get-buffer gptel-buffer-name))
           ;; Insert into existing gptel session
