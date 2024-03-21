@@ -270,7 +270,7 @@ Also format its value in the Transient menu."
      (string-replace
       "\n" "⮐ "
       (truncate-string-to-width
-       gptel--system-message (max (- (window-width) 6) 14) nil nil t)))
+       gptel--system-message (max (- (window-width) 12) 14) nil nil t)))
    [""
     "Instructions"
     ("s" "Set system message" gptel-system-prompt :transient t)
@@ -649,7 +649,7 @@ Or in an extended conversation:
                                                 'gptel)
                          t))
                       (point))
-        (system-extra (gptel--get-directive args))
+                    (gptel--at-word-end (point)))))))
         (cond
          ((buffer-live-p (get-buffer gptel-buffer-name))
           ;; Insert into existing gptel session
