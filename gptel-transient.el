@@ -275,8 +275,8 @@ Also format its value in the Transient menu."
     "Instructions"
     ("s" "Set system message" gptel-system-prompt :transient t)
     (gptel--infix-add-directive)]]
-  [[:pad-keys t
-    "Model Parameters"
+  [["Model Parameters"
+    :pad-keys t
     (gptel--infix-variable-scope)
     (gptel--infix-provider)
     (gptel--infix-max-tokens)
@@ -599,10 +599,9 @@ Or in an extended conversation:
           ((member "m" args)
            (read-string
             (format "Ask %s: " (gptel-backend-name gptel-backend))
-            (apply #'buffer-substring-no-properties
-                   (if (use-region-p)
-                       (list (region-beginning) (region-end))
-                     (list (line-beginning-position) (line-end-position))))))
+            (and (use-region-p)
+                 (buffer-substring-no-properties
+                  (region-beginning) (region-end)))))
           ((member "y" args)
            (unless (car-safe kill-ring)
              (user-error "`kill-ring' is empty!  Nothing to send"))
