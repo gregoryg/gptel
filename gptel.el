@@ -356,7 +356,7 @@ transient menu interface provided by `gptel-menu'."
   `((default "Default " "You are a large language model living in Emacs and a helpful assistant. Respond concisely.") ;; there must be a default prompt
     (programming "Programming help" "You are a large language model and a careful programmer. Provide code and only code as output without any additional text, prompt or note.")
     (writing "Writing help" "You are a large language model and a writing assistant. Respond concisely.")
-    (chat . "You are a large language model and a conversation partner. Respond concisely."))
+    (chat "Chat partner" "You are a large language model and a conversation partner. Respond concisely."))
   "System prompts (directives) for the LLM.
 
 These are system instructions sent at the beginning of each
