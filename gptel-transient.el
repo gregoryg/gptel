@@ -358,7 +358,7 @@ Also format its value in the Transient menu."
   "Set up suffixes for system prompt."
   (transient-parse-suffixes
    'gptel-system-prompt
-   (cl-loop for (type . prompt) in gptel-directives
+   (cl-loop for (type desc prompt) in gptel-directives
        ;; Avoid clashes with the custom directive key
        with unused-keys = (delete ?s (number-sequence ?a ?z))
        with width = (window-width)
