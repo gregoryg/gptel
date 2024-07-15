@@ -30,6 +30,7 @@
 (declare-function prop-match-value "text-property-search")
 (declare-function text-property-search-backward "text-property-search")
 (declare-function json-read "json")
+(declare-function gptel-context--wrap "gptel-context")
 (defvar json-object-type)
 
 ;;; Gemini
@@ -114,6 +115,11 @@
                       (plist-get :parts)
                       (plist-get :text)))
     prompts))
+
+(cl-defmethod gptel--wrap-user-prompt ((_backend gptel-gemini) prompts)
+  "Wrap the last user prompt in PROMPTS with the context string."
+  (cl-callf gptel-context--wrap
+      (plist-get (plist-get (car (last prompts)) :parts) :text)))
 
 ;;;###autoload
 (cl-defun gptel-make-gemini

@@ -42,6 +42,7 @@
 (declare-function json-read "json")
 (declare-function gptel-prompt-prefix-string "gptel")
 (declare-function gptel-response-prefix-string "gptel")
+(declare-function gptel-context--wrap "gptel-context")
 
 (defmacro gptel--json-read ()
   (if (fboundp 'json-parse-buffer)
@@ -143,11 +144,21 @@ with differing settings.")
       (push (list :role "user"
                   :content
                   (string-trim
-                   (buffer-substring-no-properties (point-min) (point-max))))
-            prompts))
+                   (buffer-substring-no-properties (prop-match-beginning prop)
+                                                   (prop-match-end prop))
+                   (format "[\t\r\n ]*\\(?:%s\\)?[\t\r\n ]*"
+                           (regexp-quote (gptel-prompt-prefix-string)))
+                   (format "[\t\r\n ]*\\(?:%s\\)?[\t\r\n ]*"
+                           (regexp-quote (gptel-response-prefix-string)))))
+            prompts)
+      (and max-entries (cl-decf max-entries)))
     (cons (list :role "system"
                 :content gptel--system-message)
           prompts)))
+
+(cl-defmethod gptel--wrap-user-prompt ((_backend gptel-openai) prompts)
+  "Wrap the last user prompt in PROMPTS with the context string."
+  (cl-callf gptel-context--wrap (plist-get (car (last prompts)) :content)))
 
 ;;;###autoload
 (cl-defun gptel-make-openai
