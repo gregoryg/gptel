@@ -3,7 +3,7 @@
 ;; Copyright (C) 2023  Karthik Chikmagalur
 
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
-;; Version: 0.8.6
+;; Version: 0.9.0
 ;; Package-Requires: ((emacs "27.1") (transient "0.4.0") (compat "29.1.4.1"))
 ;; Keywords: convenience
 ;; URL: https://github.com/karthink/gptel
@@ -32,7 +32,8 @@
 ;; gptel supports
 ;;
 ;; - The services ChatGPT, Azure, Gemini, Anthropic AI, Anyscale, Together.ai,
-;;   Perplexity, Anyscale, OpenRouter, Groq and Kagi (FastGPT & Summarizer)
+;;   Perplexity, Anyscale, OpenRouter, Groq, PrivateGPT, DeepSeek and Kagi
+;;   (FastGPT & Summarizer)
 ;; - Local models via Ollama, Llama.cpp, Llamafiles or GPT4All
 ;;
 ;;  Additionally, any LLM service (local or remote) that provides an
@@ -60,8 +61,9 @@
 ;; - For Gemini: define a gptel-backend with `gptel-make-gemini', which see.
 ;; - For Anthropic (Claude): define a gptel-backend with `gptel-make-anthropic',
 ;;   which see
-;; - For Together.ai, Anyscale, Perplexity, Groq and OpenRouter: define a
-;;   gptel-backend with `gptel-make-openai', which see.
+;; - For Together.ai, Anyscale, Perplexity, Groq, OpenRouter or DeepSeek: define
+;;   a gptel-backend with `gptel-make-openai', which see.
+;; - For PrivateGPT: define a backend with `gptel-make-privategpt', which see.
 ;; - For Kagi: define a gptel-backend with `gptel-make-kagi', which see.
 ;;
 ;; For local models using Ollama, Llama.cpp or GPT4All:
@@ -83,8 +85,8 @@
 ;;
 ;; To use this in any buffer:
 ;;
-;; - Call `gptel-send' to send the text up to the cursor.  Select a region to
-;;   send only the region.
+;; - Call `gptel-send' to send the buffer's text up to the cursor.  Select a
+;;   region to send only the region.
 ;;
 ;; - You can select previous prompts and responses to continue the conversation.
 ;;
@@ -95,7 +97,6 @@
 ;; To use this in a dedicated buffer:
 ;; 
 ;; - M-x gptel: Start a chat session
-;; - C-u M-x gptel: Start another session or multiple independent chat sessions
 ;;
 ;; - In the chat session: Press `C-c RET' (`gptel-send') to send your prompt.
 ;;   Use a prefix argument (`C-u C-c RET') to access a menu.  In this menu you
@@ -106,6 +107,17 @@
 ;; - You can save this buffer to a file.  When opening this file, turn on
 ;;   `gptel-mode' before editing it to restore the conversation state and
 ;;   continue chatting.
+;;
+;; Include more context with requests:
+;;
+;; If you want to provide the LLM with more context, you can add arbitrary
+;; regions, buffers or files to the query with `gptel-add'.  (Call `gptel-add'
+;; in Dired or use the dedicated `gptel-add-file' to add files.)
+;;
+;; You can also add context from gptel's menu instead (gptel-send with a prefix
+;; arg), as well as examine or modify context.
+;;
+;; When context is available, gptel will include it with each LLM query.
 ;;
 ;; gptel in Org mode:
 ;;
@@ -517,7 +529,38 @@ with `gptel-mode' enabled), where user prompts and responses are
 always handled separately."
   :type 'boolean)
 
+(defcustom gptel-use-context 'system
+  "Where in the request to inject gptel's additional context.
+
+gptel always includes the active region or the buffer up to the
+cursor in the request to the LLM.  Additionally, you can add
+other buffers or their regions to the context with
+`gptel-add-context', or from gptel's menu.  This data will be
+sent with every request.
+
+This option controls whether and where this additional context is
+included in the request.
+
+Currently supported options are:
+
+    nil     - Do not use the context.
+    system  - Include the context with the system message.
+    user    - Include the context with the user prompt."
+  :group 'gptel
+  :type '(choice
+          (const :tag "Don't include context" nil)
+          (const :tag "With system message" system)
+          (const :tag "With user prompt" user)))
+
 (defvar-local gptel--old-header-line nil)
+
+(defvar gptel-context--alist nil
+  "List of gptel's context sources.
+
+Each entry is of the form
+ (buffer . (overlay1 overlay2 ...))
+or
+ (\"path/to/file\").")
 
 
 ;; Utility functions
@@ -650,6 +693,18 @@ in any way.")
   "Check if gptel response at position PT has variants."
   (get-char-property (or pt (point)) 'gptel-history))
 
+(defun gptel--strip-mode-suffix (mode-sym)
+  "Remove the -mode suffix from MODE-NAME.
+
+MODE-NAME is typically a major-mode symbol."
+  (let ((mode-name (thread-last
+                (symbol-name mode-sym)
+                (string-remove-suffix "-mode")
+                (string-remove-suffix "-ts"))))
+    (if (provided-mode-derived-p
+         mode-sym 'prog-mode 'text-mode 'tex-mode)
+     mode-name "")))
+
 
 ;; Logging
 
@@ -677,27 +732,27 @@ Valid JSON unless NO-JSON is t."
 (defun gptel--restore-state ()
   "Restore gptel state when turning on `gptel-mode'."
   (when (buffer-file-name)
-    (pcase major-mode
-      ('org-mode
-       (require 'gptel-org)
-       (gptel-org--restore-state))
-      (_ (when gptel--bounds
-           (mapc (pcase-lambda (`(,beg . ,end))
-                         (put-text-property beg end 'gptel 'response))
-                 gptel--bounds)
-           (message "gptel chat restored."))
-         (when gptel--backend-name
-           (if-let ((backend (alist-get
-                              gptel--backend-name gptel--known-backends
-                              nil nil #'equal)))
-               (setq-local gptel-backend backend)
-             (message
-               (substitute-command-keys
-                (concat
-                 "Could not activate gptel backend \"%s\"!  "
-                 "Switch backends with \\[universal-argument] \\[gptel-send]"
-                 " before using gptel."))
-               gptel--backend-name)))))))
+    (if (derived-mode-p 'org-mode)
+        (progn
+          (require 'gptel-org)
+          (gptel-org--restore-state))
+      (when gptel--bounds
+        (mapc (pcase-lambda (`(,beg . ,end))
+                (put-text-property beg end 'gptel 'response))
+              gptel--bounds)
+        (message "gptel chat restored."))
+      (when gptel--backend-name
+        (if-let ((backend (alist-get
+                           gptel--backend-name gptel--known-backends
+                           nil nil #'equal)))
+            (setq-local gptel-backend backend)
+          (message
+           (substitute-command-keys
+            (concat
+             "Could not activate gptel backend \"%s\"!  "
+             "Switch backends with \\[universal-argument] \\[gptel-send]"
+             " before using gptel."))
+           gptel--backend-name))))))
 
 (defun gptel--save-state ()
   "Write the gptel state to the buffer.
@@ -705,24 +760,24 @@ Valid JSON unless NO-JSON is t."
 This saves chat metadata when writing the buffer to disk.  To
 restore a chat session, turn on `gptel-mode' after opening the
 file."
-  (pcase major-mode
-    ('org-mode
-     (require 'gptel-org)
-     (gptel-org--save-state))
-    (_ (let ((print-escape-newlines t))
-         (save-excursion
-           (save-restriction
-             (add-file-local-variable 'gptel-model gptel-model)
-             (add-file-local-variable 'gptel--backend-name
-                                      (gptel-backend-name gptel-backend))
-             (unless (equal (default-value 'gptel-temperature) gptel-temperature)
-               (add-file-local-variable 'gptel-temperature gptel-temperature))
-             (unless (string= (default-value 'gptel--system-message)
-                              gptel--system-message)
-               (add-file-local-variable 'gptel--system-message gptel--system-message))
-             (when gptel-max-tokens
-               (add-file-local-variable 'gptel-max-tokens gptel-max-tokens))
-             (add-file-local-variable 'gptel--bounds (gptel--get-buffer-bounds))))))))
+  (if (derived-mode-p 'org-mode)
+      (progn
+        (require 'gptel-org)
+        (gptel-org--save-state))
+    (let ((print-escape-newlines t))
+      (save-excursion
+        (save-restriction
+          (add-file-local-variable 'gptel-model gptel-model)
+          (add-file-local-variable 'gptel--backend-name
+                                   (gptel-backend-name gptel-backend))
+          (unless (equal (default-value 'gptel-temperature) gptel-temperature)
+            (add-file-local-variable 'gptel-temperature gptel-temperature))
+          (unless (string= (default-value 'gptel--system-message)
+                           gptel--system-message)
+            (add-file-local-variable 'gptel--system-message gptel--system-message))
+          (when gptel-max-tokens
+            (add-file-local-variable 'gptel-max-tokens gptel-max-tokens))
+          (add-file-local-variable 'gptel--bounds (gptel--get-buffer-bounds)))))))
 
 
 ;; Minor mode and UI
@@ -740,7 +795,8 @@ file."
     map)
   (if gptel-mode
       (progn
-        (unless (memq major-mode '(org-mode markdown-mode text-mode))
+        (unless (or (derived-mode-p 'org-mode 'markdown-mode)
+                    (eq major-mode 'text-mode))
           (gptel-mode -1)
           (user-error (format "`gptel-mode' is not supported in `%s'." major-mode)))
         (add-hook 'before-save-hook #'gptel--save-state nil t)
@@ -753,20 +809,39 @@ file."
                       (propertize " Ready" 'face 'success)
                       '(:eval
                         (let ((system
-                               (format "[Prompt: %s]"
-                                (or (car-safe (rassoc gptel--system-message gptel-directives))
-                                 (truncate-string-to-width gptel--system-message 15 nil nil t)))))
+                               (propertize
+                                (buttonize
+                                 (format "[Prompt: %s]"
+                                  (or (car-safe (rassoc gptel--system-message gptel-directives))
+                                   (truncate-string-to-width gptel--system-message 15 nil nil t)))
+                                 (lambda (&rest _) (gptel-system-prompt)))
+                                'mouse-face 'highlight
+                                'help-echo "System message for session"))
+                              (context
+                               (and gptel-context--alist
+                                (cl-loop for entry in gptel-context--alist
+                                 if (bufferp (car entry)) count it into bufs
+                                 else count (stringp (car entry)) into files
+                                 finally return
+                                 (propertize
+                                  (buttonize
+                                   (concat "[Context: "
+                                    (and (> bufs 0) (format "%d buf" bufs))
+                                    (and (> bufs 1) "s")
+                                    (and (> bufs 0) (> files 0) ", ")
+                                    (and (> files 0) (format "%d file" files))
+                                    (and (> files 1) "s")
+                                    "]")
+                                   (lambda (&rest _)
+                                     (require 'gptel-context)
+                                     (gptel-context--buffer-setup)))
+                                  'mouse-face 'highlight
+                                  'help-echo "Active gptel context")))))
                          (concat
                           (propertize
                            " " 'display
-                           `(space :align-to (- right ,(+ 2 (length gptel-model) (length system)))))
-                          (propertize
-                           (buttonize system
-                            (lambda (&rest _) (gptel-system-prompt)))
-                           'mouse-face 'highlight
-                           'help-echo
-                           "System message for buffer")
-                          " "
+                           `(space :align-to (- right ,(+ 4 (length gptel-model) (length system) (length context)))))
+                          context " " system " "
                           (propertize
                            (buttonize (concat "[" gptel-model "]")
                             (lambda (&rest _) (gptel-menu)))
@@ -796,6 +871,8 @@ file."
                             (lambda (&rest _) (gptel-menu))))))
         (message (propertize msg 'face face))))
     (force-mode-line-update)))
+
+(declare-function gptel-context--wrap "gptel-context")
 
 
 ;; Send queries, handle responses
@@ -892,7 +969,12 @@ query data as usual, but do not send the request.
 
 Model parameters can be let-bound around calls to this function."
   (declare (indent 1))
-  (let* ((gptel--system-message system)
+  (let* ((gptel--system-message
+          ;Add context chunks to system message if required
+          (if (and gptel-context--alist
+                   (eq gptel-use-context 'system))
+              (gptel-context--wrap system)
+            system))
          (gptel-stream stream)
          (start-marker
           (cond
@@ -905,7 +987,8 @@ Model parameters can be let-bound around calls to this function."
             (set-marker (make-marker) position buffer))))
          (full-prompt
           (cond
-           ((null prompt) (gptel--create-prompt start-marker))
+           ((null prompt)
+            (gptel--create-prompt start-marker))
            ((stringp prompt)
             ;; FIXME Dear reader, welcome to Jank City:
             (with-temp-buffer
@@ -918,6 +1001,7 @@ Model parameters can be let-bound around calls to this function."
          (info (list :data request-data
                      :buffer buffer
                      :position start-marker)))
+    ;; This context should not be confused with the context aggregation context!
     (when context (plist-put info :context context))
     (when in-place (plist-put info :in-place in-place))
     (unless dry-run
@@ -1038,23 +1122,34 @@ recent exchanges.
 If the region is active limit the prompt to the region contents
 instead.
 
+If `gptel-context--alist' is non-nil and the additional
+context needs to be included with the user prompt, add it.
+
 If PROMPT-END (a marker) is provided, end the prompt contents
 there."
   (save-excursion
     (save-restriction
-      (let ((max-entries (and gptel--num-messages-to-send
-                              (* 2 gptel--num-messages-to-send))))
-        (cond
-         ((use-region-p)
-          ;; Narrow to region
-          (narrow-to-region (region-beginning) (region-end))
-          (goto-char (point-max))
-          (gptel--parse-buffer gptel-backend max-entries))
-         ((derived-mode-p 'org-mode)
-          (require 'gptel-org)
-          (gptel-org--create-prompt (or prompt-end (point-max))))
-         (t (goto-char (or prompt-end (point-max)))
-            (gptel--parse-buffer gptel-backend max-entries)))))))
+      (let* ((max-entries (and gptel--num-messages-to-send
+                               (* 2 gptel--num-messages-to-send)))
+             (prompts
+              (cond
+               ((use-region-p)
+                ;; Narrow to region
+                (narrow-to-region (region-beginning) (region-end))
+                (goto-char (point-max))
+                (gptel--parse-buffer gptel-backend max-entries))
+               ((derived-mode-p 'org-mode)
+                (require 'gptel-org)
+                (gptel-org--create-prompt (or prompt-end (point-max))))
+               (t (goto-char (or prompt-end (point-max)))
+                  (gptel--parse-buffer gptel-backend max-entries)))))
+        ;; Inject context chunks into the last user prompt if required
+        ;; NOTE: prompts is modified in place
+        (when (and gptel-context--alist
+                   (eq gptel-use-context 'user)
+                   (> (length prompts) 0))
+          (gptel--wrap-user-prompt gptel-backend prompts))
+        prompts))))
 
 (cl-defgeneric gptel--parse-buffer (backend max-entries)
   "Parse current buffer backwards from point and return a list of prompts.
@@ -1063,6 +1158,16 @@ BACKEND is the LLM backend in use.
 
 MAX-ENTRIES is the number of queries/responses to include for
 contexbt.")
+
+(cl-defgeneric gptel--wrap-user-prompt (backend _prompts)
+  "Wrap the last prompt in PROMPTS with gptel's context.
+
+PROMPTS is a structure as returned by `gptel--parse-buffer'.
+Typically this is a list of plists."
+  (display-warning
+   '(gptel context)
+   (format "Context support not implemented for backend %s, ignoring context"
+           (gptel-backend-name backend))))
 
 (cl-defgeneric gptel--request-data (backend prompts)
   "Generate a plist of all data for an LLM query.
@@ -1095,9 +1200,9 @@ hook."
 Currently only `org-mode' is handled.
 
 BUFFER is the LLM interaction buffer."
-  (pcase (buffer-local-value 'major-mode buffer)
-    ('org-mode (gptel--convert-markdown->org content))
-    (_ content)))
+  (if (with-current-buffer buffer (derived-mode-p 'org-mode))
+      (gptel--convert-markdown->org content)
+    content))
 
 (defun gptel--url-get-response (info &optional callback)
   "Fetch response to prompt in INFO from the LLM.

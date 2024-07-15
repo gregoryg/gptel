@@ -28,6 +28,8 @@
 (eval-when-compile
   (require 'cl-lib))
 
+(declare-function gptel-context--wrap "gptel-context")
+
 ;;; Kagi
 (cl-defstruct (gptel-kagi (:constructor gptel--make-kagi)
                             (:copier nil)
@@ -120,6 +122,15 @@
                        (list :text prompts)
                      ""))))
           prompts)))))
+
+(cl-defmethod gptel--wrap-user-prompt ((_backend gptel-kagi) prompts)
+  (cond
+   ((plist-get prompts :url)
+    (message "Ignoring gptel context for URL summary request."))
+   ((plist-get prompts :query)
+    (cl-callf gptel-context--wrap (plist-get prompts :query)))
+   ((plist-get prompts :text)
+    (cl-callf gptel-context--wrap (plist-get prompts :text)))))
 
 ;;;###autoload
 (cl-defun gptel-make-kagi

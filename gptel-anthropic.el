@@ -33,6 +33,7 @@
 (declare-function prop-match-value "text-property-search")
 (declare-function text-property-search-backward "text-property-search")
 (declare-function json-read "json" ())
+(declare-function gptel-context--wrap "gptel-context")
 
 ;;; Anthropic (Messages API)
 (cl-defstruct (gptel-anthropic (:constructor gptel--make-anthropic)
@@ -99,6 +100,10 @@
                   (string-trim (buffer-substring-no-properties (point-min) (point-max))))
             prompts))
     prompts))
+
+(cl-defmethod gptel--wrap-user-prompt ((_backend gptel-anthropic) prompts)
+  "Wrap the last user prompt in PROMPTS with the context string."
+  (cl-callf gptel-context--wrap (plist-get (car (last prompts)) :content)))
 
 ;;;###autoload
 (cl-defun gptel-make-anthropic
