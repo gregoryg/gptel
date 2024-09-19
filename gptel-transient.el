@@ -57,7 +57,7 @@ buffer-local value and set its default global value."
   "Find the additional directive in the transient ARGS.
 
 Meant to be called when `gptel-menu' is active."
-  (cl-some (lambda (s) (and (stringp s) (string-prefix-p ":" s)
+  (cl-some (lambda (s) (and (stringp (cdr s)) (string-prefix-p ":" (cdr s))
                        (concat "\n\n" (substring s 1))))
                   args))
 
@@ -387,7 +387,7 @@ Also format its value in the Transient menu."
   "Set up suffixes for system prompt."
   (transient-parse-suffixes
    'gptel-system-prompt
-   (cl-loop for (type . prompt) in gptel-directives
+   (cl-loop for (type desc prompt) in gptel-directives
        ;; Avoid clashes with the custom directive key
        with unused-keys = (delete ?s (number-sequence ?a ?z))
        with width = (window-width)

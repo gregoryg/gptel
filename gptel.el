@@ -371,10 +371,10 @@ transient menu interface provided by `gptel-menu'."
 
 ;; Model and interaction parameters
 (defcustom gptel-directives
-  '((default . "You are a large language model living in Emacs and a helpful assistant. Respond concisely.")
-    (programming . "You are a large language model and a careful programmer. Provide code and only code as output without any additional text, prompt or note.")
-    (writing . "You are a large language model and a writing assistant. Respond concisely.")
-    (chat . "You are a large language model and a conversation partner. Respond concisely."))
+  `((default "Default " "You are a large language model living in Emacs and a helpful assistant. Respond concisely.") ;; there must be a default prompt
+    (programming "Programming help" "You are a large language model and a careful programmer. Provide code and only code as output without any additional text, prompt or note.")
+    (writing "Writing help" "You are a large language model and a writing assistant. Respond concisely.")
+    (chat "Chat partner" "You are a large language model and a conversation partner. Respond concisely."))
   "System prompts (directives) for the LLM.
 
 These are system instructions sent at the beginning of each
@@ -384,7 +384,10 @@ Each entry in this alist maps a symbol naming the directive to
 the string that is sent.  To set the directive for a chat session
 interactively call `gptel-send' with a prefix argument."
   :safe #'always
-  :type '(alist :key-type symbol :value-type string))
+  :type '(alist :key-type (symbol :tag "directive-key")
+                :value-type (list (string :tag "Description")
+                                  (string :tag "Directive/System prompt"))))
+
 
 (defvar gptel--system-message (alist-get 'default gptel-directives)
   "The system message used by gptel.")
