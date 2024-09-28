@@ -32,7 +32,7 @@
 ;; gptel supports
 ;;
 ;; - The services ChatGPT, Azure, Gemini, Anthropic AI, Anyscale, Together.ai,
-;;   Perplexity, Anyscale, OpenRouter, Groq, PrivateGPT, DeepSeek, Cerebras and
+;;   Perplexity, Anyscale, OpenRouter, Groq, PrivateGPT, DeepSeek, Cerebras, Github Models and
 ;;   Kagi (FastGPT & Summarizer)
 ;; - Local models via Ollama, Llama.cpp, Llamafiles or GPT4All
 ;;
@@ -61,8 +61,8 @@
 ;; - For Gemini: define a gptel-backend with `gptel-make-gemini', which see.
 ;; - For Anthropic (Claude): define a gptel-backend with `gptel-make-anthropic',
 ;;   which see
-;; - For Together.ai, Anyscale, Perplexity, Groq, OpenRouter, DeepSeek or
-;;   Cerebras: define a gptel-backend with `gptel-make-openai', which see.
+;; - For Together.ai, Anyscale, Perplexity, Groq, OpenRouter, DeepSeek, Cerebras or
+;;   Github Models: define a gptel-backend with `gptel-make-openai', which see.
 ;; - For PrivateGPT: define a backend with `gptel-make-privategpt', which see.
 ;; - For Kagi: define a gptel-backend with `gptel-make-kagi', which see.
 ;;
@@ -171,7 +171,7 @@
   (require 'gptel-org))
 
 
-;; User options
+;;; User options
 
 (defgroup gptel nil
   "Interact with LLMs from anywhere in Emacs."
@@ -522,7 +522,7 @@ distinction is necessary for back-and-forth conversation with an
 LLM.
 
 In regular Emacs buffers you can turn this behavior off by
-setting `gptel-track-response' to `nil'.  All text, including
+setting `gptel-track-response' to nil.  All text, including
 past LLM responses, is then treated as user input when sending
 queries.
 
@@ -565,7 +565,7 @@ or
  (\"path/to/file\").")
 
 
-;; Utility functions
+;;; Utility functions
 
 (defun gptel-api-key-from-auth-source (&optional host user)
   "Lookup api key in the auth source.
@@ -596,12 +596,25 @@ and \"apikey\" as USER."
                 (error "`gptel-api-key' is not valid")))
       (t (error "`gptel-api-key' is not valid")))))
 
-(defsubst gptel--numberize (val)
+(defsubst gptel--to-number (val)
   "Ensure VAL is a number."
   (cond
    ((numberp val) val)
    ((stringp val) (string-to-number val))
    ((error "%S cannot be converted to a number" val))))
+
+(defsubst gptel--to-string (s)
+  "Convert S to a string, if possible."
+  (cl-etypecase s
+    (symbol (symbol-name s))
+    (string s)
+    (number (number-to-string s))))
+
+(defsubst gptel--intern (s)
+  "Intern S, if possible."
+  (cl-etypecase s
+    (symbol s)
+    (string (intern s))))
 
 (defun gptel-auto-scroll ()
   "Scroll window if LLM response continues below viewport.
@@ -650,10 +663,20 @@ Note: This will move the cursor."
      ,(macroexp-progn body)))
 
 (defun gptel-prompt-prefix-string ()
+  "Prefix before user prompts in `gptel-mode'."
   (or (alist-get major-mode gptel-prompt-prefix-alist) ""))
 
 (defun gptel-response-prefix-string ()
+  "Prefix before LLM responses in `gptel-mode'."
   (or (alist-get major-mode gptel-response-prefix-alist) ""))
+
+(defsubst gptel--trim-prefixes (s)
+  "Remove prompt/response prefixes from string S."
+  (string-trim s
+   (format "[\t\r\n ]*\\(?:%s\\)?[\t\r\n ]*"
+             (regexp-quote (gptel-prompt-prefix-string)))
+   (format "[\t\r\n ]*\\(?:%s\\)?[\t\r\n ]*"
+           (regexp-quote (gptel-response-prefix-string)))))
 
 (defvar-local gptel--backend-name nil
   "Store to persist backend name across Emacs sessions.
@@ -695,20 +718,33 @@ in any way.")
   "Check if gptel response at position PT has variants."
   (get-char-property (or pt (point)) 'gptel-history))
 
-(defun gptel--strip-mode-suffix (mode-sym)
-  "Remove the -mode suffix from MODE-NAME.
+(defvar gptel--mode-description-alist
+  '((js2-mode      . "Javascript")
+    (sh-mode       . "Shell")
+    (enh-ruby-mode . "Ruby")
+    (yaml-mode     . "Yaml")
+    (yaml-ts-mode  . "Yaml")
+    (rustic-mode   . "Rust"))
+  "Mapping from unconventionally named major modes to languages.
 
-MODE-NAME is typically a major-mode symbol."
-  (let ((mode-name (thread-last
-                (symbol-name mode-sym)
-                (string-remove-suffix "-mode")
-                (string-remove-suffix "-ts"))))
-    (if (provided-mode-derived-p
-         mode-sym 'prog-mode 'text-mode 'tex-mode)
-     mode-name "")))
+This is used when generating system prompts for rewriting and
+when including context from these major modes.")
+
+(defun gptel--strip-mode-suffix (mode-sym)
+  "Remove the -mode suffix from MODE-SYM.
+
+MODE-SYM is typically a major-mode symbol."
+  (or (alist-get mode-sym gptel--mode-description-alist)
+      (let ((mode-name (thread-last
+                         (symbol-name mode-sym)
+                         (string-remove-suffix "-mode")
+                         (string-remove-suffix "-ts"))))
+        (if (provided-mode-derived-p
+             mode-sym 'prog-mode 'text-mode 'tex-mode)
+            mode-name ""))))
 
 
-;; Logging
+;;; Logging
 
 (defconst gptel--log-buffer-name "*gptel-log*"
   "Log buffer for gptel.")
@@ -729,7 +765,7 @@ Valid JSON unless NO-JSON is t."
       (unless no-json (ignore-errors (json-pretty-print p (point)))))))
 
 
-;; Saving and restoring state
+;;; Saving and restoring state
 
 (defun gptel--restore-state ()
   "Restore gptel state when turning on `gptel-mode'."
@@ -779,10 +815,13 @@ file."
             (add-file-local-variable 'gptel--system-message gptel--system-message))
           (when gptel-max-tokens
             (add-file-local-variable 'gptel-max-tokens gptel-max-tokens))
+          (when (natnump gptel--num-messages-to-send)
+            (add-file-local-variable 'gptel--num-messages-to-send
+                                     gptel--num-messages-to-send))
           (add-file-local-variable 'gptel--bounds (gptel--get-buffer-bounds)))))))
 
 
-;; Minor mode and UI
+;;; Minor mode and UI
 
 ;; NOTE: It's not clear that this is the best strategy:
 (add-to-list 'text-property-default-nonsticky '(gptel . t))
@@ -877,7 +916,7 @@ file."
 (declare-function gptel-context--wrap "gptel-context")
 
 
-;; Send queries, handle responses
+;;; Send queries, handle responses
 (cl-defun gptel-request
     (&optional prompt &key callback
                (buffer (current-buffer))
@@ -1041,7 +1080,7 @@ waiting for the response."
   "Show REQUEST-DATA, the full LLM query to be sent, in a buffer.
 
 This functions as a dry run of `gptel-send'.  If ARG is
-the symbol json, show the encoded JSON query instead of the lisp
+the symbol json, show the encoded JSON query instead of the Lisp
 structure gptel uses."
   (with-current-buffer (get-buffer-create "*gptel-query*")
     (let ((standard-output (current-buffer))
@@ -1379,7 +1418,7 @@ INTERACTIVEP is t when gptel is called interactively."
     (current-buffer)))
 
 
-;; Response tweaking commands
+;;; Response tweaking commands
 
 (defun gptel--attach-response-history (history &optional buf)
   "Attach HISTORY to the next gptel response in buffer BUF.

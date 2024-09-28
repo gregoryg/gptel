@@ -30,7 +30,15 @@
 (declare-function org-element-begin "org-element")
 
 ;; Functions used for saving/restoring gptel state in Org buffers
+(defvar gptel--num-messages-to-send)
 (defvar org-entry-property-inherited-from)
+(defvar gptel-backend)
+(defvar gptel--known-backends)
+(declare-function gptel--to-string "gptel")
+(declare-function gptel--intern "gptel")
+(declare-function gptel--get-buffer-bounds "gptel")
+(declare-function gptel-backend-name "gptel")
+(declare-function gptel--parse-buffer "gptel")
 (declare-function org-entry-get "org")
 (declare-function org-entry-put "org")
 (declare-function org-with-wide-buffer "org-macs")
@@ -122,7 +130,7 @@ This makes it feasible to have multiple conversation branches."
     (marker-position org-entry-property-inherited-from)))
 
 (defun gptel-org-set-topic (topic)
-  "Set a topic and limit this conversation to the current heading.
+  "Set a TOPIC and limit this conversation to the current heading.
 
 This limits the context sent to the LLM to the text between the
 current heading and the cursor position."
@@ -130,7 +138,7 @@ current heading and the cursor position."
    (list
     (progn
       (or (derived-mode-p 'org-mode)
-          (user-error "Support for multiple topics per buffer is only implemented for `org-mode'."))
+          (user-error "Support for multiple topics per buffer is only implemented for `org-mode'"))
       (completing-read "Set topic as: "
                        (org-property-values "GPTEL_TOPIC")
                        nil nil (downcase
@@ -212,7 +220,9 @@ value of `gptel-org-branching-context', which see."
 If in an Org buffer under a heading containing a stored gptel
 configuration, use that for requests instead.  This includes the
 system message, model and provider (backend), among other
-parameters."
+parameters.
+
+ARGS are the original function call arguments."
   (if (derived-mode-p 'org-mode)
       (pcase-let ((`(,gptel--system-message ,gptel-backend ,gptel-model
                      ,gptel-temperature ,gptel-max-tokens)
@@ -234,22 +244,24 @@ parameters."
 
 ;;; Saving and restoring state
 (defun gptel-org--entry-properties (&optional pt)
-  "Find gptel configuration properties stored in the current heading."
+  "Find gptel configuration properties stored at PT."
   (pcase-let
-      ((`(,system ,backend ,model ,temperature ,tokens)
+      ((`(,system ,backend ,model ,temperature ,tokens ,num)
          (mapcar
           (lambda (prop) (org-entry-get (or pt (point)) prop 'selective))
           '("GPTEL_SYSTEM" "GPTEL_BACKEND" "GPTEL_MODEL"
-            "GPTEL_TEMPERATURE" "GPTEL_MAX_TOKENS"))))
+            "GPTEL_TEMPERATURE" "GPTEL_MAX_TOKENS"
+            "GPTEL_NUM_MESSAGES_TO_SEND"))))
     (when system
       (setq system (string-replace "\\n" "\n" system)))
     (when backend
       (setq backend (alist-get backend gptel--known-backends
                                nil nil #'equal)))
     (when temperature
-      (setq temperature (gptel--numberize temperature)))
-    (when tokens (setq tokens (gptel--numberize tokens)))
-    (list system backend model temperature tokens)))
+      (setq temperature (gptel--to-number temperature)))
+    (when tokens (setq tokens (gptel--to-number tokens)))
+    (when num (setq num (gptel--to-number num)))
+    (list system backend model temperature tokens num)))
 
 (defun gptel-org--restore-state ()
   "Restore gptel state for Org buffers when turning on `gptel-mode'."
@@ -261,7 +273,7 @@ parameters."
             (mapc (pcase-lambda (`(,beg . ,end))
                     (put-text-property beg end 'gptel 'response))
                   (read bounds)))
-          (pcase-let ((`(,system ,backend ,model ,temperature ,tokens)
+          (pcase-let ((`(,system ,backend ,model ,temperature ,tokens ,num)
                        (gptel-org--entry-properties (point-min))))
             (when system (setq-local gptel--system-message system))
             (if backend (setq-local gptel-backend backend)
@@ -274,7 +286,8 @@ parameters."
                backend))
             (when model (setq-local gptel-model model))
             (when temperature (setq-local gptel-temperature temperature))
-            (when tokens (setq-local gptel-max-tokens tokens))))
+            (when tokens (setq-local gptel-max-tokens tokens))
+            (when num (setq-local gptel--num-messages-to-send num))))
       (:success (message "gptel chat restored."))
       (error (message "Could not restore gptel state, sorry! Error: %s" status)))))
 
@@ -293,8 +306,11 @@ non-nil (default), display a message afterwards."
   (unless (equal (default-value 'gptel-temperature) gptel-temperature)
     (org-entry-put pt "GPTEL_TEMPERATURE"
                    (number-to-string gptel-temperature)))
+  (when (natnump gptel--num-messages-to-send)
+    (org-entry-put pt "GPTEL_NUM_MESSAGES_TO_SEND"
+                   (number-to-string gptel--num-messages-to-send)))
   (org-entry-put pt "GPTEL_SYSTEM"
-                 (string-replace "\n" "\\n" gptel--system-message))   
+                 (string-replace "\n" "\\n" gptel--system-message))
   (when gptel-max-tokens
     (org-entry-put
      pt "GPTEL_MAX_TOKENS" (number-to-string gptel-max-tokens)))

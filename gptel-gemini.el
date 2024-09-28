@@ -71,6 +71,11 @@
                             (:category "HARM_CATEGORY_HATE_SPEECH"
                              :threshold "BLOCK_NONE")]))
         params)
+    ;; HACK only gemini-pro doesn't support system messages.  Need a less hacky
+    ;; way to do this.
+    (unless (equal gptel-model "gemini-pro")
+      (plist-put prompts-plist :system_instruction
+                 `(:parts (:text ,gptel--system-message))))
     (when gptel-temperature
       (setq params
             (plist-put params
@@ -110,10 +115,13 @@
                   (list :text (string-trim
                                (buffer-substring-no-properties (point-min) (point-max)))))
             prompts))
-    (cl-callf (lambda (msg) (concat gptel--system-message "\n\n" msg))
-        (thread-first (car prompts)
-                      (plist-get :parts)
-                      (plist-get :text)))
+    ;; HACK Prepend the system message to the first user prompt, but only for
+    ;; this model.
+    (when (equal gptel-model "gemini-pro")
+      (cl-callf (lambda (msg) (concat gptel--system-message "\n\n" msg))
+          (thread-first (car prompts)
+                        (plist-get :parts)
+                        (plist-get :text))))
     prompts))
 
 (cl-defmethod gptel--wrap-user-prompt ((_backend gptel-gemini) prompts)
@@ -127,6 +135,7 @@
           (host "generativelanguage.googleapis.com")
           (protocol "https")
           (models '("gemini-pro"
+                    "gemini-1.5-flash"
                     "gemini-1.5-pro-latest"))
           (endpoint "/v1beta/models"))
 
@@ -150,9 +159,9 @@ ENDPOINT (optional) is the API endpoint for completions, defaults to
 \"/v1beta/models\".
 
 HEADER (optional) is for additional headers to send with each
-request. It should be an alist or a function that retuns an
+request.  It should be an alist or a function that retuns an
 alist, like:
-((\"Content-Type\" . \"application/json\"))
+ ((\"Content-Type\" . \"application/json\"))
 
 KEY (optional) is a variable whose value is the API key, or
 function that returns the key."
